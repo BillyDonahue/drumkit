@@ -14,9 +14,10 @@ import pygame.midi
 
 _MODEL_TD50X = [0, 0, 0, 0, 7]
 _COMMAND_RQ1 = 0x11
-_STATUS_SYSEX = 0xF0
-_STATUS_EOX = 0xF7
-_STATUS_TIMING_CLOCK = 0xF8
+_STATUS_SYSEX = 0xf0
+_STATUS_EOX = 0xf7
+_STATUS_TIMING_CLOCK = 0xf8
+_STATUS_PROGRAM_CHANGE = 0xc9
 _VENDOR_ID_ROLAND = 0x41
 _DEVICE_ID = 0x10
 _TARGET_DEVICE_NAME = "TD-50X"
@@ -58,7 +59,7 @@ def prepare_sysex_msg(addr, size):
     msg.extend(payload)
     msg.append(checksum(payload))
     msg.append(_STATUS_EOX)
-    print(f'msg={[f"{x:02x}" for x in msg]}')
+    #print(f'msg={[f"{x:02x}" for x in msg]}')
     return msg
 
 
@@ -107,18 +108,24 @@ midi_output = pygame.midi.Output(devices[1])
 # current_kit_sysex_msg = prepare_sysex_msg(0, 1)
 
 try:
-    kit_index = 0
-    sysex_response_buffer = None
     pending = None
+    kit_init_index = 0
+    sysex_response_buffer = None
+    sent = False
 
     while True:
-        if pending is None and kit_index < 100:
+        if pending is None and kit_init_index < 100:
+            #print(f"kit_init_index:{kit_init_index}")
+            pending = kit_init_index
+            kit_init_index += 1
+
+        if pending is not None and not sent:
             time.sleep(0.1)
-            pending = kit_index
-            print(f"pending:{pending}")
-            kit_addr = (4 << 21) + kit_index * (2 << 14)
+            #print(f"pending:{pending}")
+            kit_addr = (4 << 21) + pending * (2 << 14)
             msg = prepare_sysex_msg(kit_addr, 27)
             midi_output.write_sys_ex(0, msg)
+            sent = True
 
         # read one event
         event_list = pygame.midi.Input.read(midi_input, 1)
@@ -129,14 +136,18 @@ try:
             if sysex_response_buffer is not None:
                 sysex_response_buffer.extend(data)
                 if _STATUS_EOX in data:
-                    parse_sysex(kit_index, sysex_response_buffer)
+                    parse_sysex(pending, sysex_response_buffer)
                     sysex_response_buffer = None
                     pending = None
-                    kit_index += 1
+                    sent = False
             elif data[0] == _STATUS_SYSEX:
                 sysex_response_buffer = data
             elif data[0] == _STATUS_TIMING_CLOCK:
                 continue  # clock sync message
+            elif data[0] == _STATUS_PROGRAM_CHANGE:
+                print(f'Kit changed to {data[1]+1:02d}')
+                if pending is None:
+                    pending = data[1]
             else:
                 print(f'{[f"{d:02x}" for d in data]} {timestamp * 1e-3 : .3f}')
 
