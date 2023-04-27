@@ -92,7 +92,7 @@ def find_devices():
 
 
 def parse_sysex(kit, buf):
-    s = "".join(chr(b) for b in buf[13:-4])
+    s = "".join(chr(b) for b in buf[13:-3])
     # print(f'{[f"{b:02x}" for b in buf]}')
     print(f"{kit+1:03d} : {s}")
 
