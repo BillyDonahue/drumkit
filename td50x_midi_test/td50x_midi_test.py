@@ -120,7 +120,6 @@ try:
             kit_init_index += 1
 
         if pending is not None and not sent:
-            time.sleep(0.1)
             #print(f"pending:{pending}")
             kit_addr = (4 << 21) + pending * (2 << 14)
             msg = prepare_sysex_msg(kit_addr, 27)
