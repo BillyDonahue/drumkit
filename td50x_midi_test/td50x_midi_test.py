@@ -137,7 +137,8 @@ try:
                 sysex_response_buffer = data
             elif data[0] == _STATUS_TIMING_CLOCK:
                 continue  # clock sync message
-            print(f'{[f"{d:02x}" for d in data]} {timestamp * 1e-3 : .3f}')
+            else:
+                print(f'{[f"{d:02x}" for d in data]} {timestamp * 1e-3 : .3f}')
 
 except KeyboardInterrupt:
     midi_output.close()
