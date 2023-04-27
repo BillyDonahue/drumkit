@@ -1,87 +1,145 @@
-#Suppress the hello message from PyGame
+# Suppress the hello message from PyGame
 from os import environ
-environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
+
+environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
 
 import sys
 import os
 import time
 import pygame.midi
 
-#https://www.pygame.org/docs/ref/midi.html#pygame.midi.Output.write_sys_ex
+# https://www.pygame.org/docs/ref/midi.html#pygame.midi.Output.write_sys_ex
 # Current Kit? Addr = 00 00 00 00
-# SetList starting addr = 03 00 00 00
-def print_msg(msg):
-    new_msg = []
-    for x in range(0, len(msg)):
-        new_msg.append(hex(msg[x]))
-    print(new_msg)
-        
 
-#add the status fields and checksum to the message
-def prepare_sysex_msg(addr, data):
-    prepared_msg = [0xF0, 0x41, 0x10, 0x00, 0x00, 0x00, 0x00, 0x07, 0x11]
+
+_MODEL_TD50X = [0, 0, 0, 0, 7]
+_COMMAND_RQ1 = 0x11
+_STATUS_SYSEX = 0xF0
+_STATUS_EOX = 0xF7
+_STATUS_TIMING_CLOCK = 0xF8
+_VENDOR_ID_ROLAND = 0x41
+_DEVICE_ID = 0x10
+_TARGET_DEVICE_NAME = "TD-50X"
+
+
+def flatten(*args):
+    out = []
+    for a in args:
+        if isinstance(a, list):
+            out.extend(a)
+        else:
+            out.append(a)
+    return out
+
+
+def pack4(n):
+    out = []
+    for i in range(4):
+        out.append((n >> 21) & 0x7f)
+        n <<= 7
+    return out
+
+
+def checksum(arr):
     sum = 0
-    for byte in addr:
-        sum += byte
-        prepared_msg.append(byte)
-    for byte in data:
-        sum += byte
-        prepared_msg.append(byte)
-    checksum = 128 - (sum % 128)
-    prepared_msg.append(checksum)
-    prepared_msg.append(0xF7)
-    print_msg(prepared_msg)
-    return prepared_msg 
-        
-input_device_id = -1
-output_device_id = -1
-device_name = "TD-50X"
+    for b in arr:
+        sum += b
+    return 128 - (sum % 128)
 
-#Initialize Midi
+
+def prepare_sysex_msg(addr, size):
+    """add the status fields and checksum to the message"""
+    msg = flatten(
+        _STATUS_SYSEX, _VENDOR_ID_ROLAND, _DEVICE_ID, _MODEL_TD50X, _COMMAND_RQ1
+    )
+    payload = []
+    payload.extend(pack4(addr))
+    payload.extend(pack4(size))
+    msg.extend(payload)
+    msg.append(checksum(payload))
+    msg.append(_STATUS_EOX)
+    print(f'msg={[f"{x:02x}" for x in msg]}')
+    return msg
+
+
+def find_devices():
+    """Find the TD-50X devices"""
+    num_midi_devices = pygame.midi.get_count()
+    print(f"Found {num_midi_devices} MIDI devices")
+    print(f"Searching devices for name=[{_TARGET_DEVICE_NAME}]")
+    input_device_id = None
+    output_device_id = None
+    for m in range(num_midi_devices):
+        device_info = pygame.midi.get_device_info(m)
+        if not device_info:
+            continue
+        iface, dname, is_input, is_output, opened = device_info
+        dname = dname.decode(encoding="UTF-8")
+        print(f"  [{m}] [{dname}] {is_input} {is_output}")
+        if dname == _TARGET_DEVICE_NAME:
+            if is_input == 1:
+                input_device_id = m
+            if is_output == 1:
+                output_device_id = m
+    if input_device_id is None or output_device_id is None:
+        if input_device_id is None:
+            print("No input device found")
+        if output_device_id is None:
+            print("No output device found")
+        sys.exit(0)
+    return input_device_id, output_device_id
+
+
+def parse_sysex(kit, buf):
+    s = "".join(chr(b) for b in buf[13:-4])
+    # print(f'{[f"{b:02x}" for b in buf]}')
+    print(f"{kit+1:03d} : {s}")
+
+
+# Initialize Midi
 pygame.midi.init()
 
-#Find the TD-50X devices
-num_midi_devices = pygame.midi.get_count()
-print(f"Found {num_midi_devices} Midi Devices")
-print(f"Searching devices for name=[{device_name}]")
+devices = find_devices()
+print(f"Devices found: in=[{devices[0]}], out=[{devices[1]}]")
+midi_input = pygame.midi.Input(devices[0])
+midi_output = pygame.midi.Output(devices[1])
 
-for m in range(0, num_midi_devices):
-    device_info = pygame.midi.get_device_info(m)
-    if device_info is None:
-        continue
-    print(device_info[1].decode(encoding='UTF-8'))
-    if device_info[1].decode(encoding='UTF-8') == device_name:
-        if device_info[1] == 1:
-            input_device_id = m
-        if device_info[1] == 0:
-            output_device_id = m
+# current_kit_sysex_msg = prepare_sysex_msg(0, 1)
 
-input_device_id = 0
-output_device_id = 3
-
-if input_device_id >= 0:
-    print(f"Input Device Found: id=[{input_device_id}] name=[{device_name}]")
-else:
-    print("Input Device not found")
-if output_device_id >= 0:
-    print(f"Output Device Found: id=[{output_device_id}] name=[{device_name}]")
-else:
-    print("Output Device not found")
-if input_device_id == -1 or output_device_id == -1:
-    sys.exit(0)
-
-midi_output = pygame.midi.Output(output_device_id)
-current_kit_sysex_msg = prepare_sysex_msg([0x00, 0x00, 0x00, 0x00], [0x00, 0x00, 0x00, 0x01])
-kitname_sysex_msg = prepare_sysex_msg([0x04, 0x00, 0x00, 0x00], [0x00, 0x00, 0x00, 0x1B])
-midiInput = pygame.midi.Input(input_device_id)
-sent = False
 try:
-    midi_output.write_sys_ex(0, kitname_sysex_msg)
-    while(True): 
-        midi_data = pygame.midi.Input.read(midiInput,1)
-        if len(midi_data) > 0:
-            print(midi_data)
+    kit_index = 0
+    sysex_response_buffer = None
+    pending = None
+
+    while True:
+        if pending is None and kit_index < 100:
+            time.sleep(0.1)
+            pending = kit_index
+            print(f"pending:{pending}")
+            kit_addr = (4 << 21) + kit_index * (2 << 14)
+            msg = prepare_sysex_msg(kit_addr, 27)
+            midi_output.write_sys_ex(0, msg)
+
+        # read one event
+        event_list = pygame.midi.Input.read(midi_input, 1)
+        if len(event_list) == 0:
+            continue
+        for event in event_list:
+            data, timestamp = event
+            if sysex_response_buffer is not None:
+                sysex_response_buffer.extend(data)
+                if _STATUS_EOX in data:
+                    parse_sysex(kit_index, sysex_response_buffer)
+                    sysex_response_buffer = None
+                    pending = None
+                    kit_index += 1
+            elif data[0] == _STATUS_SYSEX:
+                sysex_response_buffer = data
+            elif data[0] == _STATUS_TIMING_CLOCK:
+                continue  # clock sync message
+            print(f'{[f"{d:02x}" for d in data]} {timestamp * 1e-3 : .3f}')
+
 except KeyboardInterrupt:
     midi_output.close()
-    midiInput.close()
+    midi_input.close()
     print("Keyboard Interrupt. Exiting")
