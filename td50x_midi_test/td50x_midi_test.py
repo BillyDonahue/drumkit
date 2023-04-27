@@ -126,10 +126,7 @@ try:
             midi_output.write_sys_ex(0, msg)
             sent = True
 
-        # read one event
-        event_list = pygame.midi.Input.read(midi_input, 1)
-        if len(event_list) == 0:
-            continue
+        event_list = pygame.midi.Input.read(midi_input, 16)
         for event in event_list:
             data, timestamp = event
             if sysex_response_buffer is not None:
