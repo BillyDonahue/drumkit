@@ -22,6 +22,11 @@ _VENDOR_ID_ROLAND = 0x41
 _DEVICE_ID = 0x10
 _TARGET_DEVICE_NAME = "TD-50X"
 
+def printSync(s, **kwargs):
+    print(s)
+    sys.stdout.flush()
+    pass
+
 
 def flatten(*args):
     out = []
@@ -59,15 +64,15 @@ def prepare_sysex_msg(addr, size):
     msg.extend(payload)
     msg.append(checksum(payload))
     msg.append(_STATUS_EOX)
-    #print(f'msg={[f"{x:02x}" for x in msg]}')
+    #printSync(f'msg={[f"{x:02x}" for x in msg]}')
     return msg
 
 
 def find_devices():
     """Find the TD-50X devices"""
     num_midi_devices = pygame.midi.get_count()
-    print(f"Found {num_midi_devices} MIDI devices")
-    print(f"Searching devices for name=[{_TARGET_DEVICE_NAME}]")
+    printSync(f"Found {num_midi_devices} MIDI devices")
+    printSync(f"Searching devices for name=[{_TARGET_DEVICE_NAME}]")
     input_device_id = None
     output_device_id = None
     for m in range(num_midi_devices):
@@ -75,8 +80,8 @@ def find_devices():
         if not device_info:
             continue
         iface, dname, is_input, is_output, opened = device_info
-        dname = dname.decode(encoding="UTF-8")
-        print(f"  [{m}] [{dname}] {is_input} {is_output}")
+        dname = dname.decode(encoding="ascii")
+        printSync(f"  [{m}] [{dname}] {is_input} {is_output}")
         if dname == _TARGET_DEVICE_NAME:
             if is_input == 1:
                 input_device_id = m
@@ -84,24 +89,29 @@ def find_devices():
                 output_device_id = m
     if input_device_id is None or output_device_id is None:
         if input_device_id is None:
-            print("No input device found")
+            printSync("No input device found")
         if output_device_id is None:
-            print("No output device found")
+            printSync("No output device found")
         sys.exit(0)
     return input_device_id, output_device_id
 
 
 def parse_sysex(kit, buf):
-    s = "".join(chr(b) for b in buf[13:-3])
-    # print(f'{[f"{b:02x}" for b in buf]}')
-    print(f"{kit+1:03d} : {s}")
+    s = bytes(b & 0x7f for b in buf).decode(encoding='ascii')
+    # print(buf)
+    s = "".join(s[13:-4])
+    # s.decode(encoding="ascii")
+    # printSync(f'{[f"{b:02x}" for b in buf]}')
+    printSync(f"{kit+1:03d} : '{s[0:12]:12}' '{s[12:]}'")
+    with open('kit.txt', 'w') as f:
+        print(f"{kit+1:03d} : {s[0:12]:12}\n{s[12:]}", file=f)
 
 
 # Initialize Midi
 pygame.midi.init()
 
 devices = find_devices()
-print(f"Devices found: in=[{devices[0]}], out=[{devices[1]}]")
+printSync(f"Devices found: in=[{devices[0]}], out=[{devices[1]}]")
 midi_input = pygame.midi.Input(devices[0])
 midi_output = pygame.midi.Output(devices[1])
 
@@ -115,19 +125,18 @@ try:
 
     while True:
         if pending is None and kit_init_index < 100:
-            #print(f"kit_init_index:{kit_init_index}")
+            #printSync(f"kit_init_index:{kit_init_index}")
             pending = kit_init_index
             kit_init_index += 1
 
         if pending is not None and not sent:
-            #print(f"pending:{pending}")
+            #printSync(f"pending:{pending}")
             kit_addr = (4 << 21) + pending * (2 << 14)
             msg = prepare_sysex_msg(kit_addr, 27)
             midi_output.write_sys_ex(0, msg)
             sent = True
 
-        event_list = pygame.midi.Input.read(midi_input, 16)
-        for event in event_list:
+        for event in pygame.midi.Input.read(midi_input, 16):
             data, timestamp = event
             if sysex_response_buffer is not None:
                 sysex_response_buffer.extend(data)
@@ -141,13 +150,14 @@ try:
             elif data[0] == _STATUS_TIMING_CLOCK:
                 continue  # clock sync message
             elif data[0] == _STATUS_PROGRAM_CHANGE:
-                print(f'Kit changed to {data[1]+1:02d}')
+                printSync(f'Kit changed to {data[1]+1:02d}')
                 if pending is None:
                     pending = data[1]
             else:
-                print(f'{[f"{d:02x}" for d in data]} {timestamp * 1e-3 : .3f}')
+                #printSync(f'{[f"{d:02x}" for d in data]} {timestamp * 1e-3 : .3f}')
+                pass
 
 except KeyboardInterrupt:
     midi_output.close()
     midi_input.close()
-    print("Keyboard Interrupt. Exiting")
+    printSync("Keyboard Interrupt. Exiting")
