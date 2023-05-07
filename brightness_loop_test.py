@@ -34,7 +34,7 @@ async def main() -> None:
                 await led.master(**setting)
                 t = now()
                 print(f't={t:9.3f}: dt={t-then:9.3f}: setting={setting}')
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(0.5)
 
 
 if __name__ == "__main__":
