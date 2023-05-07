@@ -1,12 +1,12 @@
 # Suppress the hello message from PyGame
 from os import environ
-
-environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
+environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"  # Really!?
 
 import sys
 import os
 import time
 import pygame.midi
+import mido
 
 # https://www.pygame.org/docs/ref/midi.html#pygame.midi.Output.write_sys_ex
 # Current Kit? Addr = 00 00 00 00

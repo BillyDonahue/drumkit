@@ -1,14 +1,14 @@
 
-# UI stuff
+# UI
 click
 
-# networking
+# MIDI
+pygame
+mido
+
+# Net
 websockets
 
 # WLED: not great at websockets
 wled
 
-# midi stuff
-pygame
-rtmidi
-mido
