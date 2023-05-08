@@ -125,7 +125,7 @@ def parse_sysex(buf) -> int:
     kit_step = 2 << 14
     if addr == kit_offset:
         kit = int(data[0]) + 1
-        printSync(f"Current kit: {kit:03d}")
+        #printSync(f"Current kit: {kit:03d}")
         return kit
     if addr > kit_name_start:
         kit = int((addr - kit_name_start) / kit_step)
