@@ -22,6 +22,8 @@ _VENDOR_ID_ROLAND = 0x41
 _DEVICE_ID = 0x10
 _TARGET_DEVICE_NAME = "TD-50X"
 
+last_kit = None
+
 def printSync(s, **kwargs):
     print(s)
     sys.stdout.flush()
@@ -101,7 +103,6 @@ def find_devices():
         sys.exit(0)
     return input_device_id, output_device_id
 
-
 def parse_sysex(buf) -> int:
     ok = True
     ok = ok or buf[0] == 0xf0
@@ -133,7 +134,10 @@ def parse_sysex(buf) -> int:
         sub = bytes(b & 0x7f for b in data[12:12+15]).decode(encoding='ascii')
         name = name.rstrip(' ')
         sub = sub.rstrip(' ')
-        printSync(f"{kit+1:03d}:[name:12]/[{sub}]")
+        #global last_kit
+        #if last_kit is not None and last_kit != kit:
+        #    last_kit = kit
+        printSync(f"{kit+1:03d}:[{name:12}][{sub}]")
         with open('kit.txt', 'w') as f:
             print(f"{kit+1:03d}:{name:12}\n{sub}", file=f)
         return None
