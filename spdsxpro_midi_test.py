@@ -4,10 +4,11 @@ import pygame
 from pygame.locals import *
 import mido
 import pygame.midi
-import time
-import os
-import sys
 import json
+import sys
+import os
+import time
+
 from os import environ
 environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"  # so lame
 
@@ -208,6 +209,9 @@ class SpdSxPro:
     def send_dt1(self):
         pass
 
+    def set_color(self, rgb):
+        pass
+
     def loop(self):
         """ Loop """
         now = time.time()
@@ -274,13 +278,15 @@ class SpdSxProGui:
         dotColor = self._COLORS[self.color]
         pygame.draw.circle(self.screen, dotColor, pos, 40)
 
-    def _handleKeydown(self, event):
-        _printSync(f"key pressed: {event.key}")
-        ch = chr(event.key)
-        if ch in self._COLORS:
-            self.color = ch
+    def _set_color(self, key):
+        if key not in self._COLORS:
+            return
+        if key != self.color:
+            self.spd.set_color(self._COLORS[key])
+        self.color = key
 
     def run(self):
+        _printSync('Press # keys for colors')
         while self.running:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -288,11 +294,10 @@ class SpdSxProGui:
                     pygame.quit()
                     raise SystemExit
                 if event.type == KEYDOWN:
-                    self._handleKeydown(event)
+                    self._set_color(chr(event.key))
             self.spd.loop()
             self.draw()
             pygame.display.flip()
             dt = self.clock.tick(self._FPS) / 1000  # convert msec to sec
-
 
 SpdSxProGui().run()
