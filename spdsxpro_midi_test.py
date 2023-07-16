@@ -1,14 +1,13 @@
 
 # Suppress the hello message from PyGame
+import json
+import sys
+import os
+import time
+import pygame.midi
+import mido
 from os import environ
 environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"  # so lame
-
-import mido
-import pygame.midi
-import time
-import os
-import sys
-import json
 
 
 def _printSync(msg: str, **kwargs):
@@ -19,8 +18,10 @@ def _printSync(msg: str, **kwargs):
 def _stringifyBuf(buf):
     return f"[{','.join([f'{d:02x}' for d in buf])}]"
 
+
 class NoDeviceException (Exception):
     pass
+
 
 class SpdSxPro:
     _MODEL_SPDSXPRO = [0x00, 0x00, 0x00, 0x79]
