@@ -63,15 +63,13 @@ class SpdSxPro:
         self.identityRequested = False
         self.identity = None
         self.devices = None
+        self.midi_input = None
+        self.midi_output = None
+        pygame.midi.init()
 
     def done(self):
         return self.identity is not None
 
-    def reconnect_midi(self):
-        """ midi connection seems only capable of 1 command? workaround by resetting connection on each command """
-        if self.devices is None:
-            return
-        self.init_devices()
 
     @staticmethod
     def flatten(*args):
@@ -182,6 +180,14 @@ class SpdSxPro:
 
     def init_devices(self):
         """ init """
+        if self.midi_input:
+            self.midi_input.close()
+            self.midi_input = None
+        if self.midi_output:
+            self.midi_output.close()
+            self.midi_output = None
+        pygame.midi.quit()
+        pygame.midi.init()
         if self.devices is None:
             self.devices = self.find_devices(self._device_name)
             _printSync(f"Devices: in=[{self.devices['in']}], out=[{self.devices['out']}]")
@@ -221,11 +227,12 @@ class SpdSxPro:
         return None
 
     def write_sysex(self, msg):
-        while len(msg) & 3 > 0:
-            _printSync(f'write_sysex(msg={_stringify(msg)}), (len={len(msg)})')
-            msg.append(0)
+        self.init_devices()
+        while len(msg) % 4 > 0:
+            msg.append(0x0)  # pad to 4
         _printSync(f'write_sysex(msg={_stringify(msg)})')
         self.midi_output.write_sys_ex(0, msg)
+
 
     def demo(self):
         """ Ripped from midi impl pdf
@@ -338,7 +345,7 @@ class SpdSxProGui:
 
     def __init__(self):
         pygame.init()
-        pygame.midi.init()
+        self.clock = pygame.time.Clock()
 
         self.spd = SpdSxPro()
         self.user_colors = ['0', '0', '0', '0', '0']
@@ -348,7 +355,6 @@ class SpdSxProGui:
             _printSync(ex)
             sys.exit(1)
 
-        self.clock = pygame.time.Clock()
         self.running = True
         self.screen = pygame.display.set_mode((640, 480))
 
