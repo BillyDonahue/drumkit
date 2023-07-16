@@ -18,7 +18,7 @@ def _printSync(msg: str, **kwargs):
     sys.stdout.flush()
 
 
-def _stringifyBuf(buf):
+def _stringify(buf):
     return f"[{','.join([f'{d:02x}' for d in buf])}]"
 
 
@@ -29,8 +29,9 @@ class NoDeviceException (Exception):
 class SpdSxPro:
     _device_name = "SPD-SX PRO"
 
-    # Or is it [0x00, 0x00, 0x00, 0x79]? Confusing docs!
+    # confusing docs.. which is it?
     _MODEL_SPDSXPRO = [0x00, 0x00, 0x00, 0x00, 0x16]
+    # _MODEL_SPDSXPRO = [0x00, 0x00, 0x00, 0x79]
 
     _COMMAND_RQ1 = 0x11
     _COMMAND_DT1 = 0x12
@@ -66,6 +67,12 @@ class SpdSxPro:
     def done(self):
         return self.identity is not None
 
+    def reconnect_midi(self):
+        """ midi connection seems only capable of 1 command? workaround by resetting connection on each command """
+        if self.devices is None:
+            return
+        self.init_devices()
+
     @staticmethod
     def flatten(*args):
         out = []
@@ -84,12 +91,22 @@ class SpdSxPro:
         return n
 
     @staticmethod
-    def pack4(n):
+    def pack_bit_runs(val: int, grouping: int, width: int):
+        """ pack each grouping of bits val into a byte, msn first, producing `width` bytes """
         out = []
-        for i in range(4):
-            out.append((n >> 21) & 0x7f)
-            n <<= 7
+        mask = (1 << grouping) - 1
+        for i in range(width):
+            out.append((val >> (grouping * (width - 1 - i))) & mask)
         return out
+
+    @staticmethod
+    def pack_nybbles(val: int, width: int):
+        """ pack each nybble of val into a byte, msn first, producing `width` bytes """
+        return SpdSxPro.pack_bit_runs(val, 4, width)
+
+    @staticmethod
+    def pack4(val: int):
+        return SpdSxPro.pack_bit_runs(val, 7, 4)
 
     @staticmethod
     def checksum(arr):
@@ -124,32 +141,11 @@ class SpdSxPro:
         )
         payload = []
         payload.extend(self.pack4(addr))
-        payload.extend(self.pack4(size))
+        payload.extend(data)
         msg.extend(payload)
         msg.append(self.checksum(payload))
         msg.append(self._STATUS_EOX)
         return msg
-
-    # RQ1
-    # 0xf0
-    # 0x41
-    # dev
-    #
-    # model number: SPD-SX PRO
-    # 0x00, 0x00, 0x00, 0x00, 0x16,
-    #
-    # 0x11
-    #
-    # aa
-    # bb
-    # cc
-    # dd
-    # ss
-    # tt
-    # uu
-    # vv
-    # sum
-    # 0xf7
 
     def find_devices(self, name: str):
         """Find the TD-50X devices"""
@@ -182,15 +178,15 @@ class SpdSxPro:
             raise NoDeviceException(f'No input device named "{name}"')
         if output_device_id is None:
             raise NoDeviceException(f'No output device named "{name}"')
-        return input_device_id, output_device_id
+        return {'in': input_device_id, 'out': output_device_id}
 
     def init_devices(self):
         """ init """
-        self.devices = self.find_devices(self._device_name)
-        _printSync(
-            f"Devices found: in=[{self.devices[0]}], out=[{self.devices[1]}]")
-        self.midi_input = pygame.midi.Input(self.devices[0])
-        self.midi_output = pygame.midi.Output(self.devices[1])
+        if self.devices is None:
+            self.devices = self.find_devices(self._device_name)
+            _printSync(f"Devices: in=[{self.devices['in']}], out=[{self.devices['out']}]")
+        self.midi_input = pygame.midi.Input(self.devices['in'])
+        self.midi_output = pygame.midi.Output(self.devices['out'])
 
     def parse_sysex(self, buf) -> dict:
         """ interpret buf as a SysEx message """
@@ -198,7 +194,7 @@ class SpdSxPro:
             buf.pop()
         if buf[0] != self._STATUS_SYSEX or buf[-1] != self._STATUS_EOX:
             _printSync(
-                f'SysEx response formatting error: {_stringifyBuf(buf)}')
+                f'SysEx response formatting error: {_stringify(buf)}')
             return None
         buf = buf[1:-1]  # chomp SysEx framing bytes
         msg_type, dev, sub1, sub2 = buf[0:4]
@@ -224,8 +220,30 @@ class SpdSxPro:
                     return obj
         return None
 
+    def demo(self):
+        """ Ripped from midi impl pdf
+            Requesting transmission of the output for the PAD1 of kit number 1
+        """
+        # model_id = [0x00, 0x00, 0x00, 0x00, 0x16]
+        model_id = [0x00, 0x00, 0x00, 0x76]
+        msg = self.flatten(0xF0, 0x41, 0x10, model_id,
+                           0x11, 0x04, 0x00, 0x28, 0x0E, 0x00, 0x00, 0x00, 0x01, 0x45, 0xF7)
+        _printSync(f'sending example: {_stringify(msg)}')
+        self.midi_output.write_sys_ex(0, msg)
+
     def send_dt1_poke(self, addr: int, data: bytearray):
-        pass
+        addr_buf = self.pack4(addr)
+        _printSync(
+            f"send_dt1_poke(addr={_stringify(addr_buf)}, data={_stringify(data)})")
+        msg = self.format_dt1_message(addr, data)
+        _printSync(f'sending: {_stringify(msg)}')
+        self.midi_output.write_sys_ex(0, msg)
+
+    def get_current_kit(self):
+        addr = self.unpack4([0x00, 0x00, 0x00, 0x00])
+        msg = self.format_rq1_message(addr, 4)
+        _printSync(f'sending: {_stringify(msg)}')
+        self.midi_output.write_sys_ex(0, msg)
 
     def set_user_color(self, idx: int, rgb: tuple[int, int, int]):
         # Set a sample pad user color value
@@ -245,25 +263,37 @@ class SpdSxPro:
         #     [0xab] is encoded as [0x0a, 0x0b]
         ###
 
-        user_color_ids = [10, 11, 12, 13, 14]
-        color_id = user_color_ids[idx]
+        # address layout constants derived from the above spec
+        setup_start = self.unpack4([0x01, 0x00, 0x00, 0x00])
+        setup_color_table_start = self.unpack4([0x08, 0x00])
+        setup_color_table_step = self.unpack4([0x01, 0x00])
+        setup_color_rgb = self.unpack4([0x10])
+
+        color_id = [10, 11, 12, 13, 14][idx]  # choose from user color ids
 
         addr = 0
-        addr += 0x1 << (7*3)  # start of Setup block
-        addr += 0x8 << (7*1)  # offset of Color Table array within Setup
-        addr += idx + (0x1 << (7*1))  # element `idx` within that array
-        addr += 0x10  # start of rgb within [SetupColor]
 
-        _printSync(f"Set user color {idx} to {rgb}: {self.pack4(addr)}")
-        self.send_dt1_poke(0, [0, 1, 1, 1, 1])
-        pass
+        addr += setup_start + setup_color_table_start + \
+            color_id * setup_color_table_step + setup_color_rgb
+
+        data = []
+        data.extend(self.pack_nybbles(rgb[0], 4))
+        data.extend(self.pack_nybbles(rgb[1], 4))
+        data.extend(self.pack_nybbles(rgb[2], 4))
+
+        colorHex = '(' + ','.join([f'{x:02x}' for x in rgb]) + ')'
+        _printSync(f"Set user color {color_id} to {colorHex}")
+        self.send_dt1_poke(addr, data)
+
+    def resetIdentity(self):
+        self.identityRequested = False
 
     def loop(self):
         """ Loop """
         now = time.time()
         if not self.identityRequested:
             msg = self._IDENTITY_REQUEST_MSG
-            _printSync(f'writing request {_stringifyBuf(msg)}')
+            _printSync(f'writing request {_stringify(msg)}')
             self.midi_output.write_sys_ex(0, msg)
             self.t0 = now
             self.identityRequested = True
@@ -276,13 +306,14 @@ class SpdSxPro:
 
         for event in pygame.midi.Input.read(self.midi_input, 16):
             data, _ = event
-            _printSync(f'in: {_stringifyBuf(data)}')
+            _printSync(f'in: {_stringify(data)}')
             if self.sysex_response_buffer is not None:
                 self.sysex_response_buffer.extend(data)
                 if self._STATUS_EOX in data:
                     # Full sysex packet
                     self.parse_sysex(self.sysex_response_buffer)
                     self.sysex_response_buffer = None
+                    #self.reconnect_midi()
         return True
 
 
@@ -339,6 +370,9 @@ class SpdSxProGui:
         pygame.quit()
         raise SystemExit
 
+    def get_current_kit(self):
+        self.spd.get_current_kit()
+
     def run(self):
         _printSync('Press # keys for colors')
         while self.running:
@@ -346,9 +380,18 @@ class SpdSxProGui:
                 if event.type == pygame.QUIT:
                     self.stop()
                 if event.type == KEYDOWN:
-                    key = chr(event.key)
+                    try:
+                        key = chr(event.key)
+                    except ValueError:
+                        continue
                     if key == 'q':
                         self.stop()
+                    if key == 'k':
+                        self.get_current_kit()
+                    if key == 'd':
+                        self.spd.demo()
+                    if key == 'i':
+                        self.spd.resetIdentity()
                     else:
                         # TODO support more color indexes
                         user_color_idx = 0
