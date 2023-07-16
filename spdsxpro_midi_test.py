@@ -1,13 +1,14 @@
+
 # Suppress the hello message from PyGame
+from os import environ
+environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"  # so lame
+
 import mido
 import pygame.midi
 import time
 import os
 import sys
 import json
-from os import environ
-
-environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"  # Really!?
 
 
 def _printSync(msg: str, **kwargs):
