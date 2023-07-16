@@ -31,7 +31,7 @@ class SpdSxPro:
 
     # confusing docs.. which is it?
     _MODEL_SPDSXPRO = [0x00, 0x00, 0x00, 0x00, 0x16]
-    # _MODEL_SPDSXPRO = [0x00, 0x00, 0x00, 0x79]
+    #_MODEL_SPDSXPRO = [0x00, 0x00, 0x00, 0x79]
 
     _COMMAND_RQ1 = 0x11
     _COMMAND_DT1 = 0x12
@@ -220,30 +220,36 @@ class SpdSxPro:
                     return obj
         return None
 
+    def write_sysex(self, msg):
+        while len(msg) & 3 > 0:
+            _printSync(f'write_sysex(msg={_stringify(msg)}), (len={len(msg)})')
+            msg.append(0)
+        _printSync(f'write_sysex(msg={_stringify(msg)})')
+        self.midi_output.write_sys_ex(0, msg)
+
     def demo(self):
         """ Ripped from midi impl pdf
             Requesting transmission of the output for the PAD1 of kit number 1
         """
         # model_id = [0x00, 0x00, 0x00, 0x00, 0x16]
         model_id = [0x00, 0x00, 0x00, 0x76]
-        msg = self.flatten(0xF0, 0x41, 0x10, model_id,
+        msg = self.flatten(0xF0, 0x41,
+                           self.identity['dev'],
+                           model_id,
                            0x11, 0x04, 0x00, 0x28, 0x0E, 0x00, 0x00, 0x00, 0x01, 0x45, 0xF7)
-        _printSync(f'sending example: {_stringify(msg)}')
-        self.midi_output.write_sys_ex(0, msg)
+        self.write_sysex(msg)
 
     def send_dt1_poke(self, addr: int, data: bytearray):
         addr_buf = self.pack4(addr)
         _printSync(
             f"send_dt1_poke(addr={_stringify(addr_buf)}, data={_stringify(data)})")
         msg = self.format_dt1_message(addr, data)
-        _printSync(f'sending: {_stringify(msg)}')
-        self.midi_output.write_sys_ex(0, msg)
+        self.write_sysex(msg)
 
     def get_current_kit(self):
         addr = self.unpack4([0x00, 0x00, 0x00, 0x00])
         msg = self.format_rq1_message(addr, 4)
-        _printSync(f'sending: {_stringify(msg)}')
-        self.midi_output.write_sys_ex(0, msg)
+        self.write_sysex(msg)
 
     def set_user_color(self, idx: int, rgb: tuple[int, int, int]):
         # Set a sample pad user color value
@@ -293,8 +299,7 @@ class SpdSxPro:
         now = time.time()
         if not self.identityRequested:
             msg = self._IDENTITY_REQUEST_MSG
-            _printSync(f'writing request {_stringify(msg)}')
-            self.midi_output.write_sys_ex(0, msg)
+            self.write_sysex(msg)
             self.t0 = now
             self.identityRequested = True
             self.sysex_response_buffer = []
@@ -367,6 +372,8 @@ class SpdSxProGui:
 
     def stop(self):
         self.running = False
+        if pygame.midi.get_init():
+            pygame.midi.quit()
         pygame.quit()
         raise SystemExit
 
