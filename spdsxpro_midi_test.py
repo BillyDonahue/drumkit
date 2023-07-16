@@ -1,11 +1,13 @@
 
 # Suppress the hello message from PyGame
-import json
-import sys
-import os
-import time
-import pygame.midi
+import pygame
+from pygame.locals import *
 import mido
+import pygame.midi
+import time
+import os
+import sys
+import json
 from os import environ
 environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"  # so lame
 
@@ -24,6 +26,8 @@ class NoDeviceException (Exception):
 
 
 class SpdSxPro:
+    _device_name = "SPD-SX PRO"
+
     _MODEL_SPDSXPRO = [0x00, 0x00, 0x00, 0x79]
     _COMMAND_RQ1 = 0x11
 
@@ -36,17 +40,16 @@ class SpdSxPro:
 
     _VENDOR_ID_ROLAND = 0x41
     _DEVICE_ID = 0x10
-    _TARGET_DEVICE_NAME = "SPD-SX PRO"
 
-    _GENERAL_INFO = 0x06
-    _IDENTITY_REQUEST = 0x01
-    _IDENTITY_REPLY = 0x02
+    _STATUS_GENERAL_INFO = 0x06
+    _STATUS_IDENTITY_REQUEST = 0x01
+    _STATUS_IDENTITY_REPLY = 0x02
 
     _IDENTITY_REQUEST_MSG = [_STATUS_SYSEX,
                              _STATUS_NON_REALTIME,
                              _STATUS_SYSEX_CHANNEL_BROADCAST,
-                             _GENERAL_INFO,
-                             _IDENTITY_REQUEST,
+                             _STATUS_GENERAL_INFO,
+                             _STATUS_IDENTITY_REQUEST,
                              _STATUS_EOX]
 
     def __init__(self):
@@ -164,7 +167,7 @@ class SpdSxPro:
 
     def init_devices(self):
         """ init """
-        self.devices = self.find_devices(self._TARGET_DEVICE_NAME)
+        self.devices = self.find_devices(self._device_name)
         _printSync(
             f"Devices found: in=[{self.devices[0]}], out=[{self.devices[1]}]")
         self.midi_input = pygame.midi.Input(self.devices[0])
@@ -182,8 +185,8 @@ class SpdSxPro:
         msg_type, dev, sub1, sub2 = buf[0:4]
         buf = buf[4:]
         if msg_type == self._STATUS_NON_REALTIME:
-            if sub1 == self._GENERAL_INFO:
-                if sub2 == self._IDENTITY_REPLY:
+            if sub1 == self._STATUS_GENERAL_INFO:
+                if sub2 == self._STATUS_IDENTITY_REPLY:
                     # manufacturer ID (Roland) [1]
                     # manufacturer Device family [2]
                     # manufacturer Device number [2]
@@ -198,9 +201,12 @@ class SpdSxPro:
                         }
                     }
                     _printSync(json.dumps(obj, indent=4))
-                    self.identity = obj
+                    self.identity = obj['identity']
                     return obj
         return None
+
+    def send_dt1(self):
+        pass
 
     def loop(self):
         """ Loop """
@@ -230,26 +236,63 @@ class SpdSxPro:
         return True
 
 
-def main():
-    """ program entry point """
-    pygame.midi.init()
+class SpdSxProGui:
+    _FPS = 60
 
-    spd = SpdSxPro()
-    try:
-        spd.init_devices()
-    except NoDeviceException as e:
-        _printSync(e)
-        sys.exit(1)
+    _COLORS = {
+        '0': (0x00, 0x00, 0x00),  # black
+        '1': (0xff, 0x00, 0x00),  # red
+        '2': (0x00, 0xff, 0x00),  # green
+        '3': (0x00, 0x00, 0xff),  # blue
+        '4': (0x00, 0xff, 0xff),  # cyan
+        '5': (0xff, 0xff, 0x00),  # yellow
+        '6': (0xff, 0x00, 0xff),  # purple
+        '7': (0xff, 0xff, 0xff),  # white
+    }
 
-    try:
-        while not spd.done():
-            spd.loop()
-            time.sleep(0.001)
+    def __init__(self):
+        pygame.init()
+        pygame.midi.init()
 
-    except KeyboardInterrupt:
-        spd.midi_output.close()
-        spd.midi_input.close()
-        _printSync("Keyboard Interrupt. Exiting")
+        self.spd = SpdSxPro()
+        self.color = '0'
+        try:
+            self.spd.init_devices()
+        except NoDeviceException as ex:
+            _printSync(ex)
+            sys.exit(1)
+
+        self.clock = pygame.time.Clock()
+        self.running = True
+        self.screen = pygame.display.set_mode((640, 480))
+
+        pygame.display.set_caption('SPD-SX PRO midi control')
+
+    def draw(self):
+        pos = pygame.Vector2(self.screen.get_width(), self.screen.get_height())
+        pos = pos / 2
+        dotColor = self._COLORS[self.color]
+        pygame.draw.circle(self.screen, dotColor, pos, 40)
+
+    def _handleKeydown(self, event):
+        _printSync(f"key pressed: {event.key}")
+        ch = chr(event.key)
+        if ch in self._COLORS:
+            self.color = ch
+
+    def run(self):
+        while self.running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self.running = False
+                    pygame.quit()
+                    raise SystemExit
+                if event.type == KEYDOWN:
+                    self._handleKeydown(event)
+            self.spd.loop()
+            self.draw()
+            pygame.display.flip()
+            dt = self.clock.tick(self._FPS) / 1000  # convert msec to sec
 
 
-main()
+SpdSxProGui().run()
