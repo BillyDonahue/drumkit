@@ -29,8 +29,11 @@ class NoDeviceException (Exception):
 class SpdSxPro:
     _device_name = "SPD-SX PRO"
 
-    _MODEL_SPDSXPRO = [0x00, 0x00, 0x00, 0x79]
+    # Or is it [0x00, 0x00, 0x00, 0x79]? Confusing docs!
+    _MODEL_SPDSXPRO = [0x00, 0x00, 0x00, 0x00, 0x16]
+
     _COMMAND_RQ1 = 0x11
+    _COMMAND_DT1 = 0x12
 
     _STATUS_SYSEX = 0xf0
     _STATUS_SYSEX_CHANNEL_BROADCAST = 0x7f
@@ -95,14 +98,29 @@ class SpdSxPro:
             sum += b
         return 128 - (sum % 128)
 
-    def prepare_sysex_msg(self, addr: int, size: int):
-        """add the status fields and checksum to the message"""
+    def format_rq1_message(self, addr: int, size: int):
         msg = self.flatten(
             self._STATUS_SYSEX,
             self._VENDOR_ID_ROLAND,
-            self._DEVICE_ID,
+            self.identity['dev'],
             self._MODEL_SPDSXPRO,
             self._COMMAND_RQ1
+        )
+        payload = []
+        payload.extend(self.pack4(addr))
+        payload.extend(self.pack4(size))
+        msg.extend(payload)
+        msg.append(self.checksum(payload))
+        msg.append(self._STATUS_EOX)
+        return msg
+
+    def format_dt1_message(self, addr: int, data: bytearray):
+        msg = self.flatten(
+            self._STATUS_SYSEX,
+            self._VENDOR_ID_ROLAND,
+            self.identity['dev'],
+            self._MODEL_SPDSXPRO,
+            self._COMMAND_DT1
         )
         payload = []
         payload.extend(self.pack4(addr))
@@ -206,11 +224,38 @@ class SpdSxPro:
                     return obj
         return None
 
-    def send_dt1(self):
+    def send_dt1_poke(self, addr: int, data: bytearray):
         pass
 
-    def set_user_color(self, idx:int, rgb:tuple[int,int,int]):
-        _printSync(f"Set user color {idx} to {rgb}")
+    def set_user_color(self, idx: int, rgb: tuple[int, int, int]):
+        # Set a sample pad user color value
+        # Parameter Address Map:
+        # [01 00 00 00]: Setup : [Setup]
+        # [Setup]
+        #     [08 00]: Color Table 1  : [SetupColor]
+        #     [09 00]: Color Table 2  : [SetupColor]
+        #     ...
+        #     [17 00]: Color Table 16 : [SetupColor]
+        # [SetupColor]
+        #     [00]: name [16]
+        #     [10]: R[4]  [0x00,0xff]  (split nybble format)
+        #     [14]: G[4]  [0x00,0xff]  (split nybble format)
+        #     [18]: B[4]  [0x00,0xff]  (split nybble format)
+        # split nybble format e.g.:
+        #     [0xab] is encoded as [0x0a, 0x0b]
+        ###
+
+        user_color_ids = [10, 11, 12, 13, 14]
+        color_id = user_color_ids[idx]
+
+        addr = 0
+        addr += 0x1 << (7*3)  # start of Setup block
+        addr += 0x8 << (7*1)  # offset of Color Table array within Setup
+        addr += idx + (0x1 << (7*1))  # element `idx` within that array
+        addr += 0x10  # start of rgb within [SetupColor]
+
+        _printSync(f"Set user color {idx} to {rgb}: {self.pack4(addr)}")
+        self.send_dt1_poke(0, [0, 1, 1, 1, 1])
         pass
 
     def loop(self):
@@ -260,7 +305,7 @@ class SpdSxProGui:
         pygame.midi.init()
 
         self.spd = SpdSxPro()
-        self.user_colors = ['0','0','0','0','0']
+        self.user_colors = ['0', '0', '0', '0', '0']
         try:
             self.spd.init_devices()
         except NoDeviceException as ex:
@@ -279,7 +324,7 @@ class SpdSxProGui:
         dotColor = self._COLORS[self.user_colors[0]]
         pygame.draw.circle(self.screen, dotColor, pos, 40)
 
-    def _set_user_color(self, user_color_index:int, key:str):
+    def _set_user_color(self, user_color_index: int, key: str):
         """ Rewrite a user color
             user_index [0,4] which user color to adjust
         """
@@ -289,20 +334,29 @@ class SpdSxProGui:
             self.spd.set_user_color(user_color_index, self._COLORS[key])
         self.user_colors[user_color_index] = key
 
+    def stop(self):
+        self.running = False
+        pygame.quit()
+        raise SystemExit
+
     def run(self):
         _printSync('Press # keys for colors')
         while self.running:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
-                    self.running = False
-                    pygame.quit()
-                    raise SystemExit
+                    self.stop()
                 if event.type == KEYDOWN:
-                    # TODO support more color indexes
-                    self._set_user_color(0, chr(event.key))
+                    key = chr(event.key)
+                    if key == 'q':
+                        self.stop()
+                    else:
+                        # TODO support more color indexes
+                        user_color_idx = 0
+                        self._set_user_color(user_color_idx, key)
             self.spd.loop()
             self.draw()
             pygame.display.flip()
             dt = self.clock.tick(self._FPS) / 1000  # convert msec to sec
+
 
 SpdSxProGui().run()
