@@ -209,7 +209,8 @@ class SpdSxPro:
     def send_dt1(self):
         pass
 
-    def set_color(self, rgb):
+    def set_user_color(self, idx:int, rgb:tuple[int,int,int]):
+        _printSync(f"Set user color {idx} to {rgb}")
         pass
 
     def loop(self):
@@ -259,7 +260,7 @@ class SpdSxProGui:
         pygame.midi.init()
 
         self.spd = SpdSxPro()
-        self.color = '0'
+        self.user_colors = ['0','0','0','0','0']
         try:
             self.spd.init_devices()
         except NoDeviceException as ex:
@@ -275,15 +276,18 @@ class SpdSxProGui:
     def draw(self):
         pos = pygame.Vector2(self.screen.get_width(), self.screen.get_height())
         pos = pos / 2
-        dotColor = self._COLORS[self.color]
+        dotColor = self._COLORS[self.user_colors[0]]
         pygame.draw.circle(self.screen, dotColor, pos, 40)
 
-    def _set_color(self, key):
+    def _set_user_color(self, user_color_index:int, key:str):
+        """ Rewrite a user color
+            user_index [0,4] which user color to adjust
+        """
         if key not in self._COLORS:
             return
-        if key != self.color:
-            self.spd.set_color(self._COLORS[key])
-        self.color = key
+        if key != self.user_colors[user_color_index]:
+            self.spd.set_user_color(user_color_index, self._COLORS[key])
+        self.user_colors[user_color_index] = key
 
     def run(self):
         _printSync('Press # keys for colors')
@@ -294,7 +298,8 @@ class SpdSxProGui:
                     pygame.quit()
                     raise SystemExit
                 if event.type == KEYDOWN:
-                    self._set_color(chr(event.key))
+                    # TODO support more color indexes
+                    self._set_user_color(0, chr(event.key))
             self.spd.loop()
             self.draw()
             pygame.display.flip()
