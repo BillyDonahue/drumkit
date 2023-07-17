@@ -295,7 +295,7 @@ class SpdSxPro:
         data.extend(self.pack_nybbles(rgb[2], 4))
 
         colorHex = '(' + ','.join([f'{x:02x}' for x in rgb]) + ')'
-        _printSync(f"Set user color {color_id} to {colorHex}")
+        _printSync(f"Set color {color_id} to {colorHex}")
         self.send_dt1_poke(addr, data)
 
     def resetIdentity(self):
