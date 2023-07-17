@@ -1,5 +1,8 @@
 
 # Suppress the hello message from PyGame
+from os import environ
+environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"  # so lame
+
 import pygame
 from pygame.locals import *
 import mido
@@ -8,9 +11,6 @@ import json
 import sys
 import os
 import time
-
-from os import environ
-environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"  # so lame
 
 
 def _printSync(msg: str, **kwargs):
@@ -25,26 +25,29 @@ def _stringify(buf):
 class NoDeviceException (Exception):
     pass
 
+class MyMidi:
+    def __init__(self):
+        pass
 
 class SpdSxPro:
     _device_name = "SPD-SX PRO"
 
     # confusing docs.. which is it?
     _MODEL_SPDSXPRO = [0x00, 0x00, 0x00, 0x00, 0x16]
-    #_MODEL_SPDSXPRO = [0x00, 0x00, 0x00, 0x79]
+
+    _STATUS_SYSEX = 0xf0
+    _STATUS_EOX = 0xf7
+    _STATUS_NON_REALTIME = 0x7e
+    _STATUS_SYSEX_CHANNEL_BROADCAST = 0x7f
+    _STATUS_TIMING_CLOCK = 0xf8
+    _STATUS_PROGRAM_CHANGE = 0xc9
 
     _COMMAND_RQ1 = 0x11
     _COMMAND_DT1 = 0x12
 
-    _STATUS_SYSEX = 0xf0
-    _STATUS_SYSEX_CHANNEL_BROADCAST = 0x7f
-    _STATUS_TIMING_CLOCK = 0xf8
-    _STATUS_PROGRAM_CHANGE = 0xc9
-    _STATUS_NON_REALTIME = 0x7e
-    _STATUS_EOX = 0xf7
-
     _VENDOR_ID_ROLAND = 0x41
-    _DEVICE_ID = 0x10
+    # _RESET_PER_COMMAND = True
+    _RESET_PER_COMMAND = False
 
     _STATUS_GENERAL_INFO = 0x06
     _STATUS_IDENTITY_REQUEST = 0x01
@@ -153,24 +156,21 @@ class SpdSxPro:
 
         input_device_id = None
         output_device_id = None
-        for dev in range(num_midi_devices):
-            device_info = pygame.midi.get_device_info(dev)
+        for idx in range(num_midi_devices):
+            device_info = pygame.midi.get_device_info(idx)
             if not device_info:
                 continue
-            _, dname, is_input, is_output, _ = device_info
+            iface, dname, is_input, is_output, is_opened = device_info
             dname = dname.decode(encoding="ascii")
-            io = []
-            if is_input:
-                io.append("In")
-            if is_output:
-                io.append("Out")
-            _printSync(f"  [{dev}] [{dname}] [{','.join(io)}]")
+            iface = iface.decode(encoding="ascii")
+            props = {'idx':idx, 'iface':iface, 'name':dname, 'is_input':is_input, 'is_output':is_output, 'is_opened':is_opened}
+            _printSync(f"{json.dumps(props)}")
             if dname != name:
                 continue
-            if not input_device_id and is_input == 1:
-                input_device_id = dev
-            if not output_device_id and is_output == 1:
-                output_device_id = dev
+            if input_device_id is None and is_input == 1:
+                input_device_id = idx 
+            if output_device_id is None and is_output == 1:
+                output_device_id = idx
 
         if input_device_id is None:
             raise NoDeviceException(f'No input device named "{name}"')
@@ -186,13 +186,19 @@ class SpdSxPro:
         if self.midi_output:
             self.midi_output.close()
             self.midi_output = None
-        pygame.midi.quit()
-        pygame.midi.init()
+
+        self.devices = None
+
+        if self._RESET_PER_COMMAND:
+            if pygame.midi.get_init():
+                _printSync(f"restarting midi")
+                pygame.midi.quit()
+                pygame.midi.init()
         if self.devices is None:
             self.devices = self.find_devices(self._device_name)
             _printSync(f"Devices: in=[{self.devices['in']}], out=[{self.devices['out']}]")
         self.midi_input = pygame.midi.Input(self.devices['in'])
-        self.midi_output = pygame.midi.Output(self.devices['out'])
+        self.midi_output = pygame.midi.Output(self.devices['out'], latency=0)
 
     def parse_sysex(self, buf) -> dict:
         """ interpret buf as a SysEx message """
