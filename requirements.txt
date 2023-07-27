@@ -12,3 +12,4 @@ websockets
 # WLED: not great at websockets
 wled
 
+paho-mqtt

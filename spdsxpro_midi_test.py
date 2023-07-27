@@ -1,16 +1,20 @@
 
 # Suppress the hello message from PyGame
+from websockets.server import serve
+import queue
+import random
+import time
+import os
+import sys
+import json
+from paho.mqtt import client as mqtt_client
+import pygame.midi
+import mido
+from pygame.locals import *
+import pygame
+import asyncio
 from os import environ
 environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"  # so lame
-
-import pygame
-from pygame.locals import *
-import mido
-import pygame.midi
-import json
-import sys
-import os
-import time
 
 
 def _printSync(msg: str, **kwargs):
@@ -25,9 +29,92 @@ def _stringify(buf):
 class NoDeviceException (Exception):
     pass
 
+
+class ColorPicker:
+    def __init__(self, x, y, w, h):
+        self.rect = pygame.Rect(x, y, w, h)
+        self.image = pygame.Surface((w, h))
+        self.image.fill((255, 255, 255))
+        self.rad = h//2
+        self.pwidth = w-self.rad*2
+        for i in range(self.pwidth):
+            color = pygame.Color(0)
+            color.hsla = (int(360*i/self.pwidth), 100, 50, 100)
+            pygame.draw.rect(self.image, color,
+                             (i+self.rad, h//3, 1, h-2*h//3))
+        self.p = 0
+
+    def get_color(self):
+        color = pygame.Color(0)
+        color.hsla = (int(self.p * self.pwidth), 100, 50, 100)
+        return color
+
+    def update(self):
+        moude_buttons = pygame.mouse.get_pressed()
+        mouse_pos = pygame.mouse.get_pos()
+        if moude_buttons[0] and self.rect.collidepoint(mouse_pos):
+            self.p = (mouse_pos[0] - self.rect.left - self.rad) / self.pwidth
+            self.p = (max(0, min(self.p, 1)))
+
+    def draw(self, surf):
+        surf.blit(self.image, self.rect)
+        center = self.rect.left + self.rad + self.p * self.pwidth, self.rect.centery
+        pygame.draw.circle(surf, self.get_color(),
+                           center, self.rect.height // 2)
+
+
+class MqttListener:
+    def __init__(self, broker: str, port: int, topic: str, queue: queue.SimpleQueue):
+        self.broker = broker
+        self.port = port
+        self.topic = topic
+        self.queue = queue
+        self.client_id = f'python-mqtt-{random.randint(0, 1000)}'
+        self.client = None  # need to connect
+
+    def connect(self):
+        def on_connect(client, userdata, flags, rc):
+            if rc == 0:
+                print("Connected to MQTT Broker!")
+            else:
+                print("Failed to connect, return code %d\n", rc)
+        self.client = mqtt_client.Client(self.client_id)
+        self.client.user_data_set(self)
+        self.client.on_connect = on_connect
+        self.client.connect(self.broker, self.port)
+        return self.client
+
+    def subscribe(self):
+        def on_message(client, userdata, msg):
+            payload = msg.payload.decode()
+            obj = json.loads(payload)
+            print(f"MQTT: {msg.topic}: {payload} => {obj}")
+            userdata._publish(obj)
+
+        self.client.on_message = on_message
+        self.client.subscribe(self.topic)
+        print(f"Subscribed to `{self.topic}`")
+
+    def start(self):
+        self.client.loop_start()
+
+    def stop(self):
+        self.client.loop_stop()
+
+    def _publish(self, obj: tuple[int, int, int]):
+        self.queue.put(obj)
+
+    def poll(self) -> tuple[int, int, int]:
+        try:
+            return self.queue.get(block=False)
+        except queue.Empty:
+            return None
+
+
 class MyMidi:
     def __init__(self):
         pass
+
 
 class SpdSxPro:
     _device_name = "SPD-SX PRO"
@@ -47,7 +134,7 @@ class SpdSxPro:
 
     _VENDOR_ID_ROLAND = 0x41
     _RESET_PER_COMMAND = True
-    #_RESET_PER_COMMAND = False
+    # _RESET_PER_COMMAND = False
 
     _STATUS_GENERAL_INFO = 0x06
     _STATUS_IDENTITY_REQUEST = 0x01
@@ -72,7 +159,6 @@ class SpdSxPro:
 
     def done(self):
         return self.identity is not None
-
 
     @staticmethod
     def flatten(*args):
@@ -163,12 +249,13 @@ class SpdSxPro:
             iface, dname, is_input, is_output, is_opened = device_info
             dname = dname.decode(encoding="ascii")
             iface = iface.decode(encoding="ascii")
-            props = {'idx':idx, 'iface':iface, 'name':dname, 'is_input':is_input, 'is_output':is_output, 'is_opened':is_opened}
+            props = {'idx': idx, 'iface': iface, 'name': dname,
+                     'is_input': is_input, 'is_output': is_output, 'is_opened': is_opened}
             _printSync(f"{json.dumps(props)}")
             if dname != name:
                 continue
             if input_device_id is None and is_input == 1:
-                input_device_id = idx 
+                input_device_id = idx
             if output_device_id is None and is_output == 1:
                 output_device_id = idx
 
@@ -196,7 +283,8 @@ class SpdSxPro:
                 pygame.midi.init()
         if self.devices is None:
             self.devices = self.find_devices(self._device_name)
-            _printSync(f"Devices: in=[{self.devices['in']}], out=[{self.devices['out']}]")
+            _printSync(
+                f"Devices: in=[{self.devices['in']}], out=[{self.devices['out']}]")
         self.midi_input = pygame.midi.Input(self.devices['in'])
         self.midi_output = pygame.midi.Output(self.devices['out'], latency=0)
 
@@ -238,19 +326,6 @@ class SpdSxPro:
             msg.append(0x0)  # pad to 4
         _printSync(f'write_sysex(msg={_stringify(msg)})')
         self.midi_output.write_sys_ex(0, msg)
-
-
-    def demo(self):
-        """ Ripped from midi impl pdf
-            Requesting transmission of the output for the PAD1 of kit number 1
-        """
-        # model_id = [0x00, 0x00, 0x00, 0x00, 0x16]
-        model_id = [0x00, 0x00, 0x00, 0x76]
-        msg = self.flatten(0xF0, 0x41,
-                           self.identity['dev'],
-                           model_id,
-                           0x11, 0x04, 0x00, 0x28, 0x0E, 0x00, 0x00, 0x00, 0x01, 0x45, 0xF7)
-        self.write_sysex(msg)
 
     def send_dt1_poke(self, addr: int, data: bytearray):
         addr_buf = self.pack4(addr)
@@ -302,6 +377,9 @@ class SpdSxPro:
 
         colorHex = '(' + ','.join([f'{x:02x}' for x in rgb]) + ')'
         _printSync(f"Set color {color_id} to {colorHex}")
+        if self.identity is None:
+            _printSync("Skipping. no identity for target device yet")
+            return
         self.send_dt1_poke(addr, data)
 
     def resetIdentity(self):
@@ -331,14 +409,14 @@ class SpdSxPro:
                     # Full sysex packet
                     self.parse_sysex(self.sysex_response_buffer)
                     self.sysex_response_buffer = None
-                    #self.reconnect_midi()
+                    # self.reconnect_midi()
         return True
 
 
 class SpdSxProGui:
     _FPS = 60
 
-    _COLORS = {
+    _KEY_COLORS = {
         '0': (0x00, 0x00, 0x00),  # black
         '1': (0xff, 0x00, 0x00),  # red
         '2': (0x00, 0xff, 0x00),  # green
@@ -353,8 +431,20 @@ class SpdSxProGui:
         pygame.init()
         self.clock = pygame.time.Clock()
 
+        self.queue = queue.SimpleQueue()
+
+        self.rgb = [(0, 0, 0)]
+
+        print("MQTT starting")
+        self.mqtt = MqttListener(
+            "localhost", 1883, "spdsxpro/color/1", self.queue)
+        self.mqtt.connect()
+        self.mqtt.subscribe()
+        print("MQTT connected")
+
         self.spd = SpdSxPro()
         self.user_colors = ['0', '0', '0', '0', '0']
+
         try:
             self.spd.init_devices()
         except NoDeviceException as ex:
@@ -364,26 +454,34 @@ class SpdSxProGui:
         self.running = True
         self.screen = pygame.display.set_mode((640, 480))
 
+        self.picker = ColorPicker(50, 50, 400, 60)
+        self.known_picker_color = None
         pygame.display.set_caption('SPD-SX PRO midi control')
 
     def draw(self):
         pos = pygame.Vector2(self.screen.get_width(), self.screen.get_height())
         pos = pos / 2
-        dotColor = self._COLORS[self.user_colors[0]]
+        dotColor = self.rgb[0]
+        self.picker.draw(self.screen)
         pygame.draw.circle(self.screen, dotColor, pos, 40)
 
-    def _set_user_color(self, user_color_index: int, key: str):
-        """ Rewrite a user color
-            user_index [0,4] which user color to adjust
-        """
-        if key not in self._COLORS:
+    def _set_user_color_key(self, user_color_index: int, key: str):
+        if key not in self._KEY_COLORS:
             return
-        if key != self.user_colors[user_color_index]:
-            self.spd.set_user_color(user_color_index, self._COLORS[key])
+        self._set_user_color(user_color_index, self._KEY_COLORS[key])
         self.user_colors[user_color_index] = key
+
+    def _set_user_color(self, user_color_index: int, rgb: tuple[int, int, int]):
+        """ Rewrite a user color
+            user_color_index [0,4] which user color to adjust
+        """
+        self.rgb[user_color_index] = rgb
+        print(f'self.rgb={self.rgb}')
+        self.spd.set_user_color(user_color_index, self.rgb[user_color_index])
 
     def stop(self):
         self.running = False
+        self.mqtt.stop()
         if pygame.midi.get_init():
             pygame.midi.quit()
         pygame.quit()
@@ -392,7 +490,22 @@ class SpdSxProGui:
     def get_current_kit(self):
         self.spd.get_current_kit()
 
+    # async def main():
+    #    async with serve(echo, "localhost", 8765):
+    #        await asyncio.Future()  # run forever
+    # asyncio.run(main())
+
+    def pollMqtt(self):
+        new_color = self.mqtt.poll()
+        if new_color is None:
+            return
+        print(f"New color: {new_color}")
+        self._set_user_color(0, new_color)
+        self.draw()
+
     def run(self):
+        self.mqtt.start()
+
         _printSync('Press # keys for colors')
         while self.running:
             for event in pygame.event.get():
@@ -407,15 +520,21 @@ class SpdSxProGui:
                         self.stop()
                     if key == 'k':
                         self.get_current_kit()
-                    if key == 'd':
-                        self.spd.demo()
                     if key == 'i':
                         self.spd.resetIdentity()
                     else:
                         # TODO support more color indexes
                         user_color_idx = 0
-                        self._set_user_color(user_color_idx, key)
+                        self._set_user_color_key(user_color_idx, key)
             self.spd.loop()
+
+            self.picker.update()
+            picker_color = self.picker.get_color()
+            if self.known_picker_color is None or picker_color != self.known_picker_color:
+                self.known_picker_color = picker_color
+                print(f"picker_color change: {picker_color}")
+                self._set_user_color(0, (picker_color[0], picker_color[1], picker_color[2]))
+            self.pollMqtt()
             self.draw()
             pygame.display.flip()
             dt = self.clock.tick(self._FPS) / 1000  # convert msec to sec
