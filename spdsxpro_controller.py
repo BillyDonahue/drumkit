@@ -58,7 +58,7 @@ class MqttListener:
     def start(self):
         self.client.loop_start()
 
-    def poll(self) -> tuple[int, int, int]:
+    def poll(self):
         try:
             return self.queue.get(block=False)
         except queue.Empty:
@@ -66,26 +66,15 @@ class MqttListener:
 
 
 class SpdSxPro:
-    # confusing docs.. which is it?
-    _MODEL_SPDSXPRO = [0x00, 0x00, 0x00, 0x00, 0x16]
-
     _STATUS_SYSEX = 0xf0
     _STATUS_EOX = 0xf7
-    _STATUS_NON_REALTIME = 0x7e
-    _STATUS_SYSEX_CHANNEL_BROADCAST = 0x7f
-    _STATUS_TIMING_CLOCK = 0xf8
-    _STATUS_PROGRAM_CHANGE = 0xc9
-
-    _COMMAND_RQ1 = 0x11
     _COMMAND_DT1 = 0x12
-
     _VENDOR_ID_ROLAND = 0x41
+    _MODEL_SPDSXPRO = [0x00, 0x00, 0x00, 0x00, 0x16]
 
-    # Something weird with macOS pygame.midi?
-    # Can only get one command in.
-    _RESET_PER_COMMAND_WORKAROUND = True
-
-    _STATUS_GENERAL_INFO = 0x06
+    # Something weird with macOS, pygame.midi, or the SPD-SX PRO itself?
+    # Can only get one command in, and the connection stops working.
+    _RECONNECT_MIDI_PER_COMMAND = True
 
     # Address layout constants from the SPD-SX PRO MIDI impl doc.
     _SETUP_START = [0x01, 0x00, 0x00, 0x00]
@@ -176,7 +165,7 @@ class SpdSxPro:
     def ensure_init_devices(self):
         """ init """
         is_init = pygame.midi.get_init()
-        if self._RESET_PER_COMMAND_WORKAROUND and is_init:
+        if self._RECONNECT_MIDI_PER_COMMAND and is_init:
             if self.midi_output:
                 self.midi_output.close()
                 self.midi_output = None
@@ -219,19 +208,11 @@ class SpdSxPro:
         msg = self._format_dt1_message(addr, data)
         self._write_sys_ex(msg)
 
-    def loop(self):
-        """ Loop """
-        return True
-
-
 class App:
     _FPS = 60
 
     def __init__(self, options):
-        pygame.init()
-        self.clock = pygame.time.Clock()
         self.queue = queue.SimpleQueue()
-        self.rgb = (0, 0, 0)
         self.mqtt = MqttListener(broker=options.a,
                                  port=options.p,
                                  topic=options.t,
@@ -246,19 +227,18 @@ class App:
     def run(self):
         self.mqtt.start()
         while True:
-            self.spd.loop()
-            new_color = self.mqtt.poll()
-            if new_color is not None:
-                self.rgb = new_color
-                self.spd.send_user_color(0, self.rgb)
-            self.clock.tick(self._FPS) / 1000  # convert msec to sec
+            doc = self.mqtt.poll()
+            if doc is not None:
+                arr = doc['colors']
+                for i in range(len(arr)):
+                    self.spd.send_user_color(i, rgb = doc['colors'][i])
 
 
 parser = argparse.ArgumentParser()
 for opt, val, help in [
     ('-a', 'localhost', 'MQTT broker IP'),
     ('-p', 1883, 'MQTT broker port'),
-    ('-t', "spdsxpro/color/1", 'MQTT topic'),
+    ('-t', "spdsxpro", 'MQTT topic'),
     ('-i', "SPD-SX PRO", 'MIDI connection name'),
     ('-d', 19, 'SPD-SX PRO MIDI device id'),
 ]:
