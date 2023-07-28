@@ -238,6 +238,7 @@ class App:
                 arr = doc['colors']
                 for i in range(len(arr)):
                     self.spd.send_user_color(i, rgb = doc['colors'][i])
+            time.sleep(1. / self._FPS)
 
 
 parser = argparse.ArgumentParser()
