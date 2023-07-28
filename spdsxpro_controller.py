@@ -18,6 +18,12 @@ from websockets.server import serve
 # Suppress the hello message from PyGame
 environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"  # so lame
 
+# Example:
+# Run a mosquitto server on localhost.
+# Then configure Lumia Stream to push events like this:
+#   {"colors":[[255,128,0]]}
+# to the "spdsxpro" topic
+
 
 class NoDeviceException (Exception):
     pass
