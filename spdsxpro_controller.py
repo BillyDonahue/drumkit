@@ -53,7 +53,13 @@ class MqttListener:
 
     def subscribe(self):
         def on_message(client, userdata, msg):
-            doc = json.loads(msg.payload.decode())
+            payload = msg.payload.decode()
+            try:
+                doc = json.loads(payload)
+            except json.JSONDecodeError as ex:
+                print(f"MQTT: json decode error msg={payload}, ex={ex}")
+                return
+
             print(f"MQTT: topic={msg.topic}: msg={doc}")
             userdata.queue.put(doc)
 
