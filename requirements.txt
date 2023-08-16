@@ -2,6 +2,9 @@
 # UI
 click
 
+# BLE library
+bleak
+
 # MIDI
 pygame
 mido
