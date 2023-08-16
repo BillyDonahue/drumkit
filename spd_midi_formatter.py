@@ -28,7 +28,16 @@ class AbstractMidi:
 def main():
     """
         Example:
-          python3 spd_midi_formatter.py -d=17 ffffff 000000 110022
+            Device id, full color set:
+               white, black,
+               red, green, blue,
+               yellow, purple, cyan,
+               pink, sukipink
+          $ python3 spd_midi_formatter.py -d=19 \
+               ffffff 000000 \
+               ff0000 00ff00 0000ff \
+               ffff00 ff00ff 00ffff \
+               ffcccc fab3ff
     """
 
     parser = argparse.ArgumentParser()
