@@ -1,5 +1,7 @@
-
 from os import environ
+# Suppress the hello message from PyGame
+environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"  # so lame
+
 import argparse
 import asyncio
 import pygame
@@ -14,9 +16,6 @@ import time
 import random
 import queue
 from websockets.server import serve
-
-# Suppress the hello message from PyGame
-environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"  # so lame
 
 # Example:
 # Run a mosquitto server on localhost.
@@ -77,16 +76,63 @@ class MqttListener:
             return None
 
 
+class AbstractMidi:
+    """ Used as an argument to SpdSxPro.init """
+
+    # Something weird with macOS, pygame.midi, or the SPD-SX PRO itself?
+    # Can only get one command in, and the connection stops working.
+    _RECONNECT_MIDI_PER_COMMAND = True
+
+    def __init__(self, midi_connection_name: str):
+        self.midi_connection_name = midi_connection_name
+        self.midi_output = None
+        pygame.midi.init()
+
+    def ensure_init_devices(self):
+        """ init """
+        is_init = pygame.midi.get_init()
+        if self._RECONNECT_MIDI_PER_COMMAND and is_init:
+            if self.midi_output:
+                self.midi_output.close()
+                self.midi_output = None
+            pygame.midi.quit()
+            is_init = False
+
+        if not is_init:
+            pygame.midi.init()
+
+        if self.midi_output is None:
+            dev = self.find_output_device(self.midi_connection_name)
+            self.midi_output = pygame.midi.Output(dev, latency=0)
+
+    def write_sys_ex(self, msg):
+        hex = " ".join(f"{b:02x}" for b in msg)
+        print(f'write_sys_ex([{hex}])')
+        self.ensure_init_devices()
+        while len(msg) % 4 > 0:
+            msg.append(0)  # pad to 4
+        self.midi_output.write_sys_ex(0, msg)
+
+    def find_output_device(self, name: str):
+        """ Find the output device called `name` """
+        num_midi_devices = pygame.midi.get_count()
+        for idx in range(num_midi_devices):
+            device_info = pygame.midi.get_device_info(idx)
+            if not device_info:
+                continue
+            _, device_name, _, is_output, _ = device_info
+            device_name = device_name.decode(encoding="ascii")
+            if device_name == name and is_output == 1:
+                return idx
+        raise NoDeviceException(f'No output device named "{name}"')
+
+
 class SpdSxPro:
     _STATUS_SYSEX = 0xf0
     _STATUS_EOX = 0xf7
     _COMMAND_DT1 = 0x12
     _VENDOR_ID_ROLAND = 0x41
     _MODEL_SPDSXPRO = [0x00, 0x00, 0x00, 0x00, 0x16]
-
-    # Something weird with macOS, pygame.midi, or the SPD-SX PRO itself?
-    # Can only get one command in, and the connection stops working.
-    _RECONNECT_MIDI_PER_COMMAND = True
 
     # Address layout constants from the SPD-SX PRO MIDI impl doc.
     _SETUP_START = [0x01, 0x00, 0x00, 0x00]
@@ -97,11 +143,9 @@ class SpdSxPro:
     # Palette positions of user colors 1 through 5
     _USER_PALETTE_INDICES = [10, 11, 12, 13, 14]
 
-    def __init__(self, midi_connection_name: str, device_id: int):
-        self.midi_connection_name = midi_connection_name
+    def __init__(self, midi: AbstractMidi, device_id: int):
+        self.midi = midi
         self.device_id = device_id
-        self.midi_output = None
-        pygame.midi.init()
 
     @staticmethod
     def _flatten(*args):
@@ -161,42 +205,6 @@ class SpdSxPro:
         msg.append(self._STATUS_EOX)
         return msg
 
-    def find_output_device(self, name: str):
-        """ Find the output device called `name` """
-        num_midi_devices = pygame.midi.get_count()
-        for idx in range(num_midi_devices):
-            device_info = pygame.midi.get_device_info(idx)
-            if not device_info:
-                continue
-            _, device_name, _, is_output, _ = device_info
-            device_name = device_name.decode(encoding="ascii")
-            if device_name == name and is_output == 1:
-                return idx
-        raise NoDeviceException(f'No output device named "{name}"')
-
-    def ensure_init_devices(self):
-        """ init """
-        is_init = pygame.midi.get_init()
-        if self._RECONNECT_MIDI_PER_COMMAND and is_init:
-            if self.midi_output:
-                self.midi_output.close()
-                self.midi_output = None
-            pygame.midi.quit()
-            is_init = False
-
-        if not is_init:
-            pygame.midi.init()
-
-        if self.midi_output is None:
-            dev = self.find_output_device(self.midi_connection_name)
-            self.midi_output = pygame.midi.Output(dev, latency=0)
-
-    def _write_sys_ex(self, msg):
-        self.ensure_init_devices()
-        while len(msg) % 4 > 0:
-            msg.append(0)  # pad to 4
-        self.midi_output.write_sys_ex(0, msg)
-
     def send_user_color(self, user_color_index: int, rgb: tuple[int, int, int]):
         """ There are 5 user color slots to set """
         palette_index = self._USER_PALETTE_INDICES[user_color_index]
@@ -218,7 +226,8 @@ class SpdSxPro:
         data.extend(self.pack_nybbles(rgb[2], 4))
 
         msg = self._format_dt1_message(addr, data)
-        self._write_sys_ex(msg)
+
+        self.midi.write_sys_ex(msg)
 
 class App:
     _FPS = 60
@@ -231,7 +240,8 @@ class App:
                                  queue=self.queue)
         self.mqtt.connect()
         self.mqtt.subscribe()
-        self.spd = SpdSxPro(midi_connection_name=options.i, device_id=options.d)
+        midi = AbstractMidi(options.i)
+        self.spd = SpdSxPro(midi, device_id=options.d)
 
     def get_current_kit(self):
         self.spd.get_current_kit()
@@ -241,23 +251,29 @@ class App:
         while True:
             doc = self.mqtt.poll()
             if doc is not None:
+                print(f'doc={doc}')
                 arr = doc['colors']
                 for i in range(len(arr)):
-                    self.spd.send_user_color(i, rgb = doc['colors'][i])
+                    try:
+                        self.spd.send_user_color(i, rgb = doc['colors'][i])
+                    except Exception as ex:
+                        print(f"Exception sending color to sample pad: {ex}")
             time.sleep(1. / self._FPS)
 
+def main():
+    """main"""
+    parser = argparse.ArgumentParser()
+    for opt, val, type, help in [
+        ('-a', 'localhost', str, 'MQTT broker IP'),
+        ('-p', 1883, int, 'MQTT broker port'),
+        ('-t', "spdsxpro", str, 'MQTT topic'),
+        ('-i', "SPD-SX PRO", str, 'MIDI connection name'),
+        ('-d', 19, int, 'SPD-SX PRO MIDI device id'),
+    ]:
+        parser.add_argument(opt, default=val, help=help)
+    args = parser.parse_args()
+    print(str(args))
+    App(args).run()
 
-parser = argparse.ArgumentParser()
-for opt, val, help in [
-    ('-a', 'localhost', 'MQTT broker IP'),
-    ('-p', 1883, 'MQTT broker port'),
-    ('-t', "spdsxpro", 'MQTT topic'),
-    ('-i', "SPD-SX PRO", 'MIDI connection name'),
-    ('-d', 19, 'SPD-SX PRO MIDI device id'),
-]:
-    parser.add_argument('-' + opt, default=val, help=help)
-
-args = parser.parse_args()
-print(str(args))
-
-App(args).run()
+if __name__ == '__main__':
+    main()
